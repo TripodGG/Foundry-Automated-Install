@@ -36,5 +36,12 @@ Current Version: **v1.1**
    ```bash
    git clone https://github.com/TripodGG/Foundry-Automated-Install.git
    cd Foundry-Automated-Install
+   ```
+2. Make the script executable:
+   ```bash
    chmod +x foundry-install.sh
+   ```
+3. Execute the script:
+   ```bash
    ./foundry-install.sh
+   ```
