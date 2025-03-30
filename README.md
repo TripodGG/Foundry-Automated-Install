@@ -1,39 +1,40 @@
-# 🛠️ Foundry Automated Game Server Install
+# Foundry Automated Install
+A fully interactive, production-ready installer script for setting up a dedicated [Foundry VTT](https://foundryvtt.com) server on Ubuntu Linux.
 
-A shell script to automate the setup of a dedicated [Foundry Virtual Tabletop](https://foundryvtt.com/) server on **Ubuntu Linux**.
-
-> **Author:** [TripodGG](https://github.com/TripodGG)  
-> **Repo:** [github.com/TripodGG/Foundry-Automated-Install](https://github.com/TripodGG/Foundry-Automated-Install)  
-> **Version:** 1.0
+Created by [TripodGG](https://github.com/TripodGG)  
+Current Version: **v1.1**
 
 ---
 
-## 🚀 Features
+## 💡 Features
 
-- ✅ Installs Node.js 20.x (compatible with Foundry VTT)
-- ✅ Installs Caddy web server (for optional HTTPS support)
-- ✅ Installs PM2 for future process management
-- ✅ Creates proper user-based directory structure
-- ✅ Downloads Foundry VTT from a user-provided URL
-- ✅ Offers to clean up the installation ZIP
-- ✅ Starts Foundry using your specified data path
+- 📦 Automatic installation of:
+  - Node.js 20
+  - PM2 process manager
+  - Caddy reverse proxy with HTTPS
+  - Foundry VTT server
+- 🌍 Reverse proxy support with domain + port prompt
+- ⚙️ PM2 autostart and crash recovery
+- 🔁 Full `options.json` regeneration with backup and restore fallback
+- 🧠 RAM-based swapfile recommendations and setup
+- 📝 Full logging of every step, with timestamps
+- ❓ Interactive prompts with smart defaults
 
 ---
 
 ## 🧰 Requirements
 
-- Ubuntu 20.04 or newer
-- A valid Foundry VTT license with access to the download URL
-- Sudo/root privileges
+- Ubuntu Server 20.04 or later
+- A valid Foundry VTT download link
+- A public domain pointed at your server (for Caddy to use)
 
 ---
 
-## 📦 Installation
+## 🚀 Installation
 
-### 1. Clone this repository
-
-```bash
-git clone https://github.com/TripodGG/Foundry-Automated-Install.git
-cd Foundry-Automated-Install
-chmod +x foundry-install.sh
-./foundry-install.sh
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/TripodGG/Foundry-Automated-Install.git
+   cd Foundry-Automated-Install
+   chmod +x foundry-install.sh
+   ./foundry-install.sh
