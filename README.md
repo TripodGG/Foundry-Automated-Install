@@ -35,3 +35,5 @@ A shell script to automate the setup of a dedicated [Foundry Virtual Tabletop](h
 ```bash
 git clone https://github.com/TripodGG/Foundry-Automated-Install.git
 cd Foundry-Automated-Install
+chmod +x foundry-install.sh
+./foundry-install.sh
