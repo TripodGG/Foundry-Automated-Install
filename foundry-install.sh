@@ -96,22 +96,7 @@ cd "$homeDir/foundryvtt" || { log "❌ Failed to enter foundryvtt directory."; e
 
 # Download Foundry VTT
 log "Downloading Foundry Virtual Tabletop..."
-wget --content-disposition "$foundryUrl" >> "$logFile" 2>&1
-downloadStatus=$?
-
-if [ $downloadStatus -ne 0 ]; then
-    log "Download failed using --content-disposition. Trying fallback..."
-    
-    filename=$(basename "$foundryUrl")
-    wget -O "$filename" "$foundryUrl" >> "$logFile" 2>&1
-    if [ $? -ne 0 ]; then
-        log "❌ Fallback download failed. Please check the URL and try again."
-        exit 1
-    fi
-else
-    filename=$(ls -t *.zip | head -n 1)
-fi
-
+wget -O foundryvtt.zip "$foundryUrl" >> "$logFile" 2>&1
 log "Download complete: $filename"
 
 # Unzip the file
