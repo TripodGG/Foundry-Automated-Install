@@ -6,7 +6,7 @@
 
 
 
-scriptVersion="1.1"
+scriptVersion="1.2"
 
 # Reusable yes/no prompt function
 prompt_yes_no() {
