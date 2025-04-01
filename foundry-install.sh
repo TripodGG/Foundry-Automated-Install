@@ -96,7 +96,8 @@ cd "$homeDir/foundryvtt" || { log "❌ Failed to enter foundryvtt directory."; e
 
 # Download Foundry VTT
 log "Downloading Foundry Virtual Tabletop..."
-wget -O foundryvtt.zip "$foundryUrl" >> "$logFile" 2>&1
+filename=foundryvtt.zip
+wget -O $filename "$foundryUrl" >> "$logFile" 2>&1
 log "Download complete: $filename"
 
 # Unzip the file
@@ -121,28 +122,28 @@ else
     log "$filename not deleted"
 fi
 
-# Start Foundry manually for now
-log "Starting Foundry..."
-node foundry/resources/app/main.js --dataPath="$homeDir/foundrydata" >> "$logFile" 2>&1
-
-# Check if Foundry started successfully
-if [ $? -ne 0 ]; then
-    log "❌ Foundry failed to start. Please check for errors above."
-    exit 1
-else
-    log "✅ Foundry started successfully!"
-fi
-
 # Get private and public IP addresses
 privateIp=$(hostname -I | awk '{print $1}')
 publicIp=$(curl -s ifconfig.me)
 log "Detected private IP: $privateIp"
 log "Detected public IP: $publicIp"
 
-# Confirm Foundry started
-echo ""
+# Start Foundry manually for now
 echo "🎉 Foundry VTT has been installed!"
-echo "Please go to http://$privateIp:30000 or http://$publicIp:30000 in your browser."
+log "Starting Foundry..."
+echo ""
+echo "Please go to either http://$privateIp:30000 or http://$publicIp:30000 in your browser."
+echo "This is to confirm Foundry VTT has successfully started for the first time."
+echo "Press CTRL+C after you've verified you can see the Foundry VTT license page."
+node resources/app/main.js --dataPath="foundrydata" >> "$logFile" 2>&1
+
+# Check if Foundry started successfully
+if [ $? -ne 0 ]; then
+    log "❌ Foundry failed to start. Please check for errors in the log file."
+    exit 1
+else
+    log "✅ Foundry started successfully!"
+fi
 
 log "Access instructions: http://$privateIp:30000 or http://$publicIp:30000"
 
@@ -161,7 +162,7 @@ fi
 
 # Set PM2 config
 log "Creating PM2 configuration..."
-startCommand="node foundry/resources/app/main.js --dataPath=$homeDir/foundrydata"
+startCommand="node resources/app/main.js --dataPath=foundrydata"
 pm2 start "$startCommand" --name foundry --watch >> "$logFile" 2>&1 && log "PM2 process 'foundry' started with watch enabled"
 pm2 save >> "$logFile" 2>&1 && log "PM2 configuration saved for Foundry startup"
 
