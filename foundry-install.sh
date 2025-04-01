@@ -64,12 +64,14 @@ sudo apt install unzip npm nano libssl-dev -y >> "$logFile" 2>&1
 
 sudo apt install -y ca-certificates curl gnupg >> "$logFile" 2>&1
 curl -sL https://deb.nodesource.com/setup_20.x | sudo bash - >> "$logFile" 2>&1
+sudo apt install nodejs -y >> "$logFile" 2>&1
 
 sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
+
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg >> "$logFile" 2>&1
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >> "$logFile" 2>&1
+sudo apt install caddy -y >> "$logFile" 2>&1
 
-sudo apt install nodejs caddy -y >> "$logFile" 2>&1
 log "Dependencies and Node.js installed"
 
 # Install and set up PM2
