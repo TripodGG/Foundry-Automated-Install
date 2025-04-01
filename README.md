@@ -2,7 +2,7 @@
 A fully interactive, production-ready installer script for setting up a dedicated [Foundry VTT](https://foundryvtt.com) server on Ubuntu Linux.
 
 Created by [TripodGG](https://github.com/TripodGG)  
-Current Version: **v1.1**
+Current Version: **v1.2**
 
 ---
 
