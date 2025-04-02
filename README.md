@@ -2,7 +2,7 @@
 A fully interactive, production-ready installer script for setting up a dedicated [Foundry VTT](https://foundryvtt.com) server on Ubuntu Linux.
 
 Created by [TripodGG](https://github.com/TripodGG)  
-Current Version: **v1.2**
+Current Version: **v2.0**
 
 ---
 
@@ -39,7 +39,7 @@ Current Version: **v1.2**
    ```
 2. Make the script executable:
    ```bash
-   chmod +x foundry-install.sh
+   sudo chmod +x foundry-install.sh
    ```
 3. Execute the script:
    ```bash
