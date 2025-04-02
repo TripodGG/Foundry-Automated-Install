@@ -6,7 +6,7 @@
 
 
 
-scriptVersion="1.2"
+scriptVersion="2.0"
 
 # Reusable yes/no prompt function
 prompt_yes_no() {
@@ -47,35 +47,28 @@ username=${username:-$currentUser}
 homeDir=$(getent passwd "$username" | cut -d: -f6)
 
 # Set the log file location
-logFile="$homeDir/foundryinstall.log"
+logFile="$homeDir/install.log"
 startTime=$(date '+%Y/%m/%d %H:%M')
 log "Installation started at $startTime"
 log "Installer version: $scriptVersion"
 
 # Update packages
 log "Updating system packages..."
-sudo apt update -y >> "$logFile" 2>&1 && sudo apt upgrade -y >> "$logFile" 2>&1
-log "System packages updated"
 
-# Install dependencies and Node.js 20
-log "Installing required dependencies..."
-
-sudo apt install unzip npm nano libssl-dev -y >> "$logFile" 2>&1
-
-sudo apt install -y ca-certificates curl gnupg >> "$logFile" 2>&1
-curl -sL https://deb.nodesource.com/setup_20.x | sudo bash - >> "$logFile" 2>&1
-sudo apt install nodejs -y >> "$logFile" 2>&1
-
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
-
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl >> "$logFile" 2>&1
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg >> "$logFile" 2>&1
 curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >> "$logFile" 2>&1
+curl -sL https://deb.nodesource.com/setup_20.x | sudo bash - >> "$logFile" 2>&1
+sudo apt install -y ca-certificates curl gnupg >> "$logFile" 2>&1
+sudo mkdir -p /etc/apt/keyrings >> "$logFile" 2>&1
+sudo apt update && sudo apt upgrade -y >> "$logFile" 2>&1
+
+# Install Packages
+sudo apt install unzip -y >> "$logFile" 2>&1
+sudo apt install npm -y >> "$logFile" 2>&1
+sudo apt install libssl-dev -y >> "$logFile" 2>&1
+sudo apt install nodejs -y >> "$logFile" 2>&1
 sudo apt install caddy -y >> "$logFile" 2>&1
-
-log "Dependencies and Node.js installed"
-
-# Install and set up PM2
-log "Installing PM2..."
 sudo npm install pm2 -g >> "$logFile" 2>&1
 
 # Capture the PM2 startup command
@@ -105,7 +98,7 @@ filename=foundryvtt.zip
 wget -O $filename "$foundryUrl" >> "$logFile" 2>&1
 log "Download complete: $filename"
 
-# Unzip the file
+# Unzip the FoundryVTT file
 log "Unzipping $filename..."
 if ! unzip "$filename" >> "$logFile" 2>&1; then
     log "❌ Failed to unzip $filename. Aborting."
@@ -141,6 +134,7 @@ echo "Please go to either http://$privateIp:30000 or http://$publicIp:30000 in y
 echo "This is to confirm Foundry VTT has successfully started for the first time."
 echo "Press CTRL+C after you've verified you can see the Foundry VTT license page."
 node resources/app/main.js --dataPath="foundrydata" >> "$logFile" 2>&1
+echo ""
 
 # Check if Foundry started successfully
 if [ $? -ne 0 ]; then
@@ -205,7 +199,7 @@ log "Caddyfile written with host URL: $hostUrl"
 
 # Restart Caddy
 log "Restarting Caddy to apply configuration..."
-sudo systemctl restart caddy >> "$logFile" 2>&1
+sudo service caddy restart >> "$logFile" 2>&1
 
 if [ $? -eq 0 ]; then
     log "✅ Caddy restarted successfully"
@@ -280,6 +274,7 @@ else
 fi
 
 # Restart Foundry to take the new config
+sudo service caddy restart
 pm2 restart foundry
 
 # Detect system memory and recommend swap size
@@ -349,3 +344,4 @@ sudo swapon --show | tee -a "$logFile"
 log "✅ Installation completed successfully at $(date '+%Y/%m/%d %H:%M')"
 echo "📝 Log file saved to $logFile"
 exit 0
+
