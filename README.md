@@ -12,7 +12,7 @@ Current Version: **v3.1**
 
 - 🛠️ **Fully interactive install script** — prompts you for instance name, download URL, domain, and port
 - 📁 **Isolated directory structure** — each instance lives in its own folder with its own data, logs, and configs
-- 🌐 **Folder access via web ** — Upload all your data with ease to each game instance with FileGator
+- 🌐 **Folder access via web** — Upload all your data with ease to each game instance with FileGator
 - 🔐 **Caddy reverse proxy support** — automatic HTTPS using your own domain/subdomain
 - ⚙️ **PM2 process manager** — auto-start, monitoring, and crash recovery
 - 📦 **Node.js installed**
