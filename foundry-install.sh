@@ -240,6 +240,86 @@ fi
 # Send Ctrl+C to the whole group (graceful shutdown)
 kill -SIGINT -$PGID
 
+# ---- Configure elFinder ---- #
+CONFIG_DIR="/var/www/elFinder-2.1.64/php"
+OUTPUT_FILE="$CONFIG_DIR/roots.config.php"
+INSTANCES_BASE="/foundry_instances"
+TMP_FILE=$(mktemp)
+
+# Input check
+if [ -z "$1" ]; then
+    echo "Usage: $0 <instanceName>"
+    exit 1
+fi
+
+instanceName="$1"
+instancePath="$INSTANCES_BASE/$instanceName"
+
+# Validate that the instance folder exists
+if [ ! -d "$instancePath" ]; then
+    echo "❌ Error: Directory '$instancePath' does not exist."
+    exit 1
+fi
+
+# Ensure the config directory exists
+mkdir -p "$CONFIG_DIR"
+
+# Create initial config file if it doesn't exist
+if [ ! -f "$OUTPUT_FILE" ]; then
+    echo "Creating new $OUTPUT_FILE"
+    echo "<?php" > "$OUTPUT_FILE"
+    echo "return array(" >> "$OUTPUT_FILE"
+
+    # Add trash volume block
+    cat <<'EOL' >> "$OUTPUT_FILE"
+    array(
+        'id'            => '1',
+        'driver'        => 'Trash',
+        'path'          => '../files/.trash/',
+        'tmbURL'        => dirname($_SERVER['PHP_SELF']) . '/../files/.trash/.tmb/',
+        'winHashFix'    => DIRECTORY_SEPARATOR !== '/',
+        'uploadDeny'    => array('all'),
+        'uploadAllow'   => array('all'),
+        'uploadOrder'   => array('deny', 'allow'),
+        'accessControl' => 'access'
+    ),
+EOL
+fi
+
+# Remove last line (the closing `);`)
+sed '$d' "$OUTPUT_FILE" > "$TMP_FILE"
+
+# Check if the instance path is already present
+if grep -q "$instancePath" "$TMP_FILE"; then
+    echo "⚠️ Instance '$instanceName' already exists in $OUTPUT_FILE. Skipping."
+else
+    echo "➕ Adding instance: $instancePath"
+    cat <<EOL >> "$TMP_FILE"
+    array(
+        'driver'        => 'LocalFileSystem',
+        'path'          => '$instancePath',
+        'trashHash'     => 't1_Lw',
+        'winHashFix'    => DIRECTORY_SEPARATOR !== '/',
+        'uploadDeny'    => array('all'),
+        'uploadAllow'   => array('all'),
+        'uploadOrder'   => array('deny', 'allow'),
+        'accessControl' => 'access'
+    ),
+EOL
+fi
+
+# Add back the closing );
+echo ");" >> "$TMP_FILE"
+
+# Replace the original file
+mv "$TMP_FILE" "$OUTPUT_FILE"
+chmod 644 "$OUTPUT_FILE"
+
+# Change ownership to www-data user and group
+chown www-data:www-data "$OUTPUT_FILE"
+
+echo "✅ roots.config.php updated successfully at $OUTPUT_FILE with ownership www-data:www-data"
+
 # ---- Write the Caddy file ---- #
 # Gather info for the Caddy file
 read -p "Enter the URL that will be used for this instance (e.g. gamename.example.com): " instanceUrl
@@ -306,8 +386,6 @@ $elFinderhost {
     basicauth {
         $USERNAME $HASH
     }
-
-    tls
 }
 EOF
 
