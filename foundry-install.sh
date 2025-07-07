@@ -238,13 +238,59 @@ else
 fi
 
 # Send Ctrl+C to the whole group (graceful shutdown)
-kill -SIGINT -$PGID
+sudo kill -SIGINT -$PGID
 
 # ---- Configure elFinder ---- #
+# Download the custom connector file
+# Variables
+GITHUB_RAW_URL="https://raw.githubusercontent.com/TripodGG/Foundry-Automated-Install/Multi-install-3.0/connector.minimal.php"
+DEST_PATH="/var/www/elFinder-2.1.64/php/connector.minimal.php"
+BACKUP_PATH="${DEST_PATH}.bak.$(date +%Y%m%d%H%M%S)"
+TMP_FILE="$(mktemp)"
 CONFIG_DIR="/var/www/elFinder-2.1.64/php"
 OUTPUT_FILE="$CONFIG_DIR/roots.config.php"
 INSTANCES_BASE="/foundry_instances"
 TMP_FILE=$(mktemp)
+
+# Download the file
+echo "Downloading latest connector.minimal.php to temporary file..."
+sudo wget -q -O "$TMP_FILE" "$GITHUB_RAW_URL"
+
+if [ $? -ne 0 ]; then
+    echo "Download failed!"
+    sudo rm -f "$TMP_FILE"
+    exit 1
+fi
+
+REMOTE_SHA256=$(sha256sum "$TMP_FILE" | awk '{print $1}')
+echo "Remote file SHA256: $REMOTE_SHA256"
+
+if [ -f "$DEST_PATH" ]; then
+    LOCAL_SHA256=$(sha256sum "$DEST_PATH" | awk '{print $1}')
+    echo "Local file SHA256:  $LOCAL_SHA256"
+else
+    echo "Local file does not exist."
+    LOCAL_SHA256=""
+fi
+
+if [ "$REMOTE_SHA256" = "$LOCAL_SHA256" ]; then
+    echo "✅ Local file is up to date. No replacement needed."
+    sudo rm -f "$TMP_FILE"
+    exit 0
+fi
+
+echo "❗ File differs. Backing up and replacing..."
+
+if [ -f "$DEST_PATH" ]; then
+    sudo cp "$DEST_PATH" "$BACKUP_PATH"
+    echo "Backed up local file to $BACKUP_PATH"
+fi
+
+sudo mv "$TMP_FILE" "$DEST_PATH"
+sudo chown www-data:www-data "$DEST_PATH"
+sudo chmod 644 "$DEST_PATH"
+
+echo "✅ File replaced successfully."
 
 # Input check
 if [ -z "$1" ]; then
@@ -262,7 +308,7 @@ if [ ! -d "$instancePath" ]; then
 fi
 
 # Ensure the config directory exists
-mkdir -p "$CONFIG_DIR"
+sudo mkdir -p "$CONFIG_DIR"
 
 # Create initial config file if it doesn't exist
 if [ ! -f "$OUTPUT_FILE" ]; then
