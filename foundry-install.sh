@@ -54,6 +54,9 @@ prompt_yes_no() {
 
 # ------ BEGIN INSTALL ------ #
 
+# Create log directory and file
+sudo mkdir /foundry_instances
+sudo touch /foundry_instances/FoundryInstall.log
 
 # Clear the screen
 clear
