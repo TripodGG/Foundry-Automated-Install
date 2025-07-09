@@ -54,10 +54,6 @@ prompt_yes_no() {
 
 # ------ BEGIN INSTALL ------ #
 
-# Create log directory and file
-sudo mkdir /foundry_instances
-sudo touch /foundry_instances/FoundryInstall.log
-
 # Clear the screen
 clear
 
@@ -88,33 +84,56 @@ sleep 3
 
 
 
+# Create log directory and file
+sudo mkdir /foundry_instances
+sudo touch /foundry_instances/FoundryInstall.log
 
 # ---- Update the system packages ---- #
 log "Updating system packages..."
-
-# update packages
-sudo apt update && sudo apt upgrade -y
-
-# create keyrings directory & file for caddy
-sudo mkdir -p /etc/apt/keyrings
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-# check for keyring file, create it if needed, skip if not
-if [ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]; then
-	curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-	log "Caddy GPG key added"
-else
-	log "Caddy GPG key already exists, skipping"
-fi
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-curl -sL https://deb.nodesource.com/setup_20.x | sudo bash -
-
 
 # ---- Install base applications ---- #
 log "Installing dependencies..."
 echo -e ${yellow}"Installing dependencies..."${clear}
 
-sudo apt install ca-certificates curl gnupg unzip net-tools libssl-dev nodejs apache2 git php composer caddy -y
-sudo npm install pm2 -g
+# update packages
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y ca-certificates curl gnupg unzip net-tools libssl-dev nodejs apache2 git php composer caddy -y
+
+# add Node.js repo and install
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+sudo npm install -g pm2
+
+# add Caddy GPG key and apt repo
+log "Adding Caddy repository..."
+echo -e ${yellow}"Adding Caddy repository..."${clear}
+sudo mkdir -p /etc/apt/keyrings
+# Check for existing key before downloading
+if [ ! -f /etc/apt/keyrings/caddy.gpg ]; then
+    curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/caddy.gpg > /dev/null
+    log "Caddy GPG key added."
+else
+    log "Caddy GPG key already exists. Skipping download."
+fi
+
+# Remove any old conflicting Caddy source list
+if [ -f /etc/apt/sources.list.d/caddy-stable.list ]; then
+    sudo rm /etc/apt/sources.list.d/caddy-stable.list
+    log "Removed old caddy-stable.list to avoid Signed-By conflicts."
+fi
+
+# Add Caddy repo only if it doesn't exist
+if [ ! -f /etc/apt/sources.list.d/caddy.list ]; then
+    echo "deb [signed-by=/etc/apt/keyrings/caddy.gpg] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main" | sudo tee /etc/apt/sources.list.d/caddy.list > /dev/null
+    log "Caddy APT source added."
+else
+    log "Caddy APT source already exists. Skipping."
+fi
+
+# install Caddy
+sudo apt update
+sudo apt install -y caddy
+
 
 
 
@@ -205,12 +224,14 @@ echo -e ${green}"Download complete."${clear}
 
 # Unzip the FoundryVTT file
 log "Unzipping $filename..."
+echo "Unzipping $filename to $instanceDir..."
+echo "This may take some time. Please wait..."
 sudo unzip "$filename" 2>&1 | sudo tee -a "$logFile" > /dev/null || {
 	log "❌ Failed to unzip archive."
 	echo -e ${red}"❌ An error has occurred. Please check the log file for details. $logFile"${clear}
 	exit 1
 }
-echo -e ${yellow}"Unzipping Foundry VTT to $instanceDir..."${clear}
+echo -e ${yellow}"Unzip Complete."${clear}
 
 # Ensure main.js is executable
 sudo chmod 755 "$instanceDir/resources/app/main.js" 2>&1 | sudo tee -a "$logFile" > /dev/null
@@ -222,152 +243,18 @@ prompt_yes_no "Would you like to delete the Foundry ZIP file to save space?" del
 if [ "$deleteZip" = true ]; then
 	sudo rm "$filename"
 	log "$filename deleted"
+	echo "$filename deleted."
 else
 	log "$filename retained"
+	echo "$filename retained."
 fi
-
-# ---- Foundry Startup Test ---- #
-# Start Foundry in a new process group (so we can ctrl+c the whole thing)
-setsid node foundry.js & 
-PID=$!
-PGID=$(ps -o pgid= $PID | grep -o '[0-9]*')
-
-sleep 3
-
-if curl -s http://localhost:30000 | grep -q "expected-text"; then
-	echo "✅ Foundry is up and responding"
-else
-	echo "❌ Foundry did not respond as expected"
-fi
-
-# Send Ctrl+C to the whole group (graceful shutdown)
-sudo kill -SIGINT -$PGID
 
 # ---- Configure elFinder ---- #
-# Download the custom connector file
-# Variables
-GITHUB_RAW_URL="https://raw.githubusercontent.com/TripodGG/Foundry-Automated-Install/Multi-install-3.0/connector.minimal.php"
-DEST_PATH="/var/www/elFinder-2.1.64/php/connector.minimal.php"
-BACKUP_PATH="${DEST_PATH}.bak.$(date +%Y%m%d%H%M%S)"
-TMP_FILE="$(mktemp)"
-CONFIG_DIR="/var/www/elFinder-2.1.64/php"
-OUTPUT_FILE="$CONFIG_DIR/roots.config.php"
-INSTANCES_BASE="/foundry_instances"
-TMP_FILE=$(mktemp)
-
-# Download the file
-echo "Downloading latest connector.minimal.php to temporary file..."
-sudo wget -q -O "$TMP_FILE" "$GITHUB_RAW_URL"
-
-if [ $? -ne 0 ]; then
-    echo "Download failed!"
-    sudo rm -f "$TMP_FILE"
-    exit 1
-fi
-
-REMOTE_SHA256=$(sha256sum "$TMP_FILE" | awk '{print $1}')
-echo "Remote file SHA256: $REMOTE_SHA256"
-
-if [ -f "$DEST_PATH" ]; then
-    LOCAL_SHA256=$(sha256sum "$DEST_PATH" | awk '{print $1}')
-    echo "Local file SHA256:  $LOCAL_SHA256"
-else
-    echo "Local file does not exist."
-    LOCAL_SHA256=""
-fi
-
-if [ "$REMOTE_SHA256" = "$LOCAL_SHA256" ]; then
-    echo "✅ Local file is up to date. No replacement needed."
-    sudo rm -f "$TMP_FILE"
-    exit 0
-fi
-
-echo "❗ File differs. Backing up and replacing..."
-
-if [ -f "$DEST_PATH" ]; then
-    sudo cp "$DEST_PATH" "$BACKUP_PATH"
-    echo "Backed up local file to $BACKUP_PATH"
-fi
-
-sudo mv "$TMP_FILE" "$DEST_PATH"
-sudo chown www-data:www-data "$DEST_PATH"
-sudo chmod 644 "$DEST_PATH"
-
-echo "✅ File replaced successfully."
-
-# Input check
-if [ -z "$1" ]; then
-    echo "Usage: $0 <instanceName>"
-    exit 1
-fi
-
-instanceName="$1"
-instancePath="$INSTANCES_BASE/$instanceName"
-
-# Validate that the instance folder exists
-if [ ! -d "$instancePath" ]; then
-    echo "❌ Error: Directory '$instancePath' does not exist."
-    exit 1
-fi
-
-# Ensure the config directory exists
-sudo mkdir -p "$CONFIG_DIR"
-
-# Create initial config file if it doesn't exist
-if [ ! -f "$OUTPUT_FILE" ]; then
-    echo "Creating new $OUTPUT_FILE"
-    echo "<?php" > "$OUTPUT_FILE"
-    echo "return array(" >> "$OUTPUT_FILE"
-
-    # Add trash volume block
-    cat <<'EOL' >> "$OUTPUT_FILE"
-    array(
-        'id'            => '1',
-        'driver'        => 'Trash',
-        'path'          => '../files/.trash/',
-        'tmbURL'        => dirname($_SERVER['PHP_SELF']) . '/../files/.trash/.tmb/',
-        'winHashFix'    => DIRECTORY_SEPARATOR !== '/',
-        'uploadDeny'    => array('all'),
-        'uploadAllow'   => array('all'),
-        'uploadOrder'   => array('deny', 'allow'),
-        'accessControl' => 'access'
-    ),
-EOL
-fi
-
-# Remove last line (the closing `);`)
-sed '$d' "$OUTPUT_FILE" > "$TMP_FILE"
-
-# Check if the instance path is already present
-if grep -q "$instancePath" "$TMP_FILE"; then
-    echo "⚠️ Instance '$instanceName' already exists in $OUTPUT_FILE. Skipping."
-else
-    echo "➕ Adding instance: $instancePath"
-    cat <<EOL >> "$TMP_FILE"
-    array(
-        'driver'        => 'LocalFileSystem',
-        'path'          => '$instancePath',
-        'trashHash'     => 't1_Lw',
-        'winHashFix'    => DIRECTORY_SEPARATOR !== '/',
-        'uploadDeny'    => array('all'),
-        'uploadAllow'   => array('all'),
-        'uploadOrder'   => array('deny', 'allow'),
-        'accessControl' => 'access'
-    ),
-EOL
-fi
-
-# Add back the closing );
-echo ");" >> "$TMP_FILE"
-
-# Replace the original file
-mv "$TMP_FILE" "$OUTPUT_FILE"
-chmod 644 "$OUTPUT_FILE"
-
-# Change ownership to www-data user and group
-chown www-data:www-data "$OUTPUT_FILE"
-
-echo "✅ roots.config.php updated successfully at $OUTPUT_FILE with ownership www-data:www-data"
+echo "Configuring elFinder..."
+sudo cp -f $homeDir/Foundry-Automated-Install/connector.minimal.php /var/www/elFinder-2.1.64/php/connector.minimal.php
+sudo chown www-data:www-data /var/www/elFinder-2.1.64/php/connector.minimal.php
+sudo chmod 644 /var/www/elFinder-2.1.64/php/connector.minimal.php
+echo ${green}"Configuration complete."${clear}
 
 # ---- Write the Caddy file ---- #
 # Gather info for the Caddy file
