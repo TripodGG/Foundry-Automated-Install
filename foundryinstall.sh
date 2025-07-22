@@ -548,8 +548,9 @@ echo -e ${green}"✅ PM2 configuration for $instanceName written and saved."${un
 # Symlink to the global shared assets and modules folders and confirm www-data owns the folders
 log "Creating symlink: $dataDir/Data/assets -> $assetsDir"
 log "Creating symlink: $dataDir/Data/modules -> $modulesDir"
-sudo rm -rf "$dataDir/Data/assets"
-sudo rm -rf "$dataDir/Data/modules"
+sudo -u www-data pm2 stop all
+sudo rm -R "$dataDir/Data/assets"
+sudo rm -R "$dataDir/Data/modules"
 sudo ln -sfn "$assetsDir" "$dataDir/Data/assets"
 sudo ln -sfn "$modulesDir" "$dataDir/Data/modules"
 if [ -L "$dataDir/Data/assets" ] && [ -L "$dataDir/Data/modules" ]; then
@@ -557,6 +558,7 @@ if [ -L "$dataDir/Data/assets" ] && [ -L "$dataDir/Data/modules" ]; then
 else
 	log "❌ Failed to create one or more symlinks."
 fi
+sudo -u www-data pm2 start all
 
 # ---- Finish script and close ---- #
 sudo systemctl start apache2
