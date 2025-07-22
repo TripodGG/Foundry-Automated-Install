@@ -123,6 +123,7 @@ Built with ❤️ by [TripodGG](https://github.com/TripodGG). Inspired by the Fo
 ## 🧪 Future Goals
 
 - Foundry startup test before creating the new instance
+- Install cleanup system with checkpoints
 - Single run install for all desired instances
 - Web UI for managing instances
 - Instance update automation
