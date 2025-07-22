@@ -85,8 +85,8 @@ Additional folders are created for each instance (campaign3/, campaign4/, and so
 ## 🧰 Installation
 
 ```bash
-git clone https://github.com/TripodGG/Foundry-Multi-instance-Install.git
-cd Foundry-Multi-instance-Install
+git clone https://github.com/TripodGG/Foundry-Automated-Install.git
+cd Foundry-Automated-Install
 chmod +x foundryinstall.sh
 ./foundryinstall.sh
 ```

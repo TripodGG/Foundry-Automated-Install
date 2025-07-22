@@ -171,8 +171,8 @@ if [ ! -d "/var/www/elFinder-2.1.64" ]; then
 
     # Create the index file and take ownership of www directory
     sudo mv /var/www/elFinder-2.1.64/elfinder.html /var/www/elFinder-2.1.64/index.html
-    sudo cp $homeDir/Foundry-Multi-instance-Install/connector.minimal.php /var/www/elFinder-2.1.64/php/connector.minimal.php
-	sudo cp $homeDir/Foundry-Multi-instance-Install/roots.config.php /var/www/elFinder-2.1.64/php/roots.config.php
+    sudo cp $homeDir/Foundry-Automated-Install/connector.minimal.php /var/www/elFinder-2.1.64/php/connector.minimal.php
+	sudo cp $homeDir/Foundry-Automated-Install/roots.config.php /var/www/elFinder-2.1.64/php/roots.config.php
     sudo chown -R www-data:www-data /var/www/
 
     # Create the elFinder config
