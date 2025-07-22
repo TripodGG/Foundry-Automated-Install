@@ -4,7 +4,7 @@ A fully automated, production-ready **multi-instance** installer for [Foundry Vi
 Easily deploy multiple isolated instances of Foundry VTT with custom domains, ports, and automatic reverse proxy support via **Caddy** and process management through **PM2**.
 
 Created with 🧠, ☕, and some 🎲 by [TripodGG](https://github.com/TripodGG)  
-Current Version: **v3.1**
+Current Version: **v3.5**
 
 ---
 
