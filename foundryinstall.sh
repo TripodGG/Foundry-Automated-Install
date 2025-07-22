@@ -13,7 +13,9 @@ IFS=$'\n\t'
 scriptVersion="3.5"
 currentUser=$(whoami)
 homeDir=$(eval echo ~)
-logFile='/tmp/foundryinstall/install.log'
+logFile="/tmp/foundryinstall/install_$(date +%Y%m%d_%H%M%S).log"
+stateFile="/tmp/foundryinstall/state.${instanceName}"
+VERBOSE=false
 red='\033[0;31m'
 yellow='\033[33m'
 green='\033[0;32m'
@@ -25,8 +27,12 @@ log() {
     local message="$1"
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] $message" | tee -a "$logFile"
+    echo "[$timestamp] $message" >> "$logFile"
+    if [ "$VERBOSE" = true ]; then
+        echo "[$timestamp] $message"
+    fi
 }
+
 
 # Yes/no prompt
 prompt_yes_no() {
@@ -48,12 +54,45 @@ prompt_yes_no() {
     fi
 }
 
+# Cleanup function
+cleanup() {
+	log "⚠️ Installation interrupted or failed. Running cleanup..."
+
+	# Example rollback steps:
+	sudo systemctl stop apache2 || true
+	sudo systemctl restart caddy || true
+	log "Cleaned up background services."
+
+	# Optionally delete partially created files/directories (dangerous if too aggressive)
+	# sudo rm -rf "$instanceDir" "$dataDir"
+
+	echo -e ${red}"⚠️ Installation interrupted. Check the log at $logFile"${undo}
+	exit 1
+}
+
+# Trap INT (Ctrl+C), TERM (kill), and ERR (error if using set -e)
+trap cleanup INT TERM ERR
+
+# Check if step is already done
+checkpoint_done() {
+	grep -q "$1" "$stateFile"
+}
+
+# Mark a checkpoint
+mark_checkpoint() {
+	echo "$1" >> "$stateFile"
+	log "✅ Checkpoint reached: $1"
+}
+
+
 
 
 # ----- Begin Install ----- #
 
+# Create the log file
 mkdir -p "$(dirname "$logFile")"
 
+# Ensure script is not ran as root
 if [ "$EUID" -eq 0 ]; then
   echo ${red}"This script must NOT be run as root."${undo}
   exit 1
@@ -85,6 +124,8 @@ echo "This installer will prompt you for basic information about your Foundry in
 read -n 1 -p "Press any key to begin the initial setup process."
 echo "Begining installation. Please wait..."
 sleep 3
+
+
 
 log "🚀 Starting FoundryVTT install script (v$scriptVersion) for user $currentUser"
 
@@ -183,7 +224,6 @@ log "Foundry Install Started"
 log "Installer version: $scriptVersion"
 log "Instance name: $instanceName"
 log "Directories created: $instanceDir, $dataDir, $assetsDir, $modulesDir"
-sudo chown -R www-data:www-data /foundry_instances
 
 # Prompt for Foundry URL
 read -p "Enter the Foundry VTT download URL: " foundryUrl
@@ -222,6 +262,20 @@ if [ "$deleteZip" = true ]; then
 else
 	log "$filename retained"
 fi
+
+# Symlink to the global shared assets and modules folders
+log "Creating symlink: $dataDir/Data/assets -> $assetsDir"
+log "Creating symlink: $dataDir/Data/modules -> $modulesDir"
+sudo mkdir "$dataDir/Data/assets"
+sudo mkdir "$dataDir/Data/modules"
+sudo ln -sfn "$assetsDir" "$dataDir/Data/assets"
+sudo ln -sfn "$modulesDir" "$dataDir/Data/modules"
+if [ -L "$dataDir/Data/assets" ] && [ -L "$dataDir/Data/modules" ]; then
+	log "✅ Symlinks created successfully."
+else
+	log "❌ Failed to create one or more symlinks."
+fi
+sudo chown -R www-data:www-data /foundry_instances
 
 # ---- Foundry Startup Test ---- #
 # Start Foundry in a new process group (so we can ctrl+c the whole thing)
@@ -508,8 +562,9 @@ echo -e ${green}"✅ PM2 configuration for $instanceName written and saved."${un
 # ---- Finish script and close ---- #
 sudo systemctl start apache2
 log "✅ Setup for '$instanceName' completed successfully."
-echo -e "✅ Setup for '$instanceName' completed successfully."
-echo -e ${green}"Log saved to: $logFile"${undo}
+echo -e ${green}"✅ Setup for '$instanceName' completed successfully."${undo}
+echo "Log saved to: $logFile"
+echo -e ${green}"Access your Foundry instance at: https://$instanceUrl$"${undo}
 echo ""
 echo -e ${yellow}"To create another instance on this server, run this script again using:"${undo}
 echo "./foundry-install.sh"
