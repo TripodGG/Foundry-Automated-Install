@@ -72,12 +72,13 @@ Additional folders are created for each instance (campaign3/, campaign4/, and so
    - Provide the Foundry VTT download URL
    - Assign a custom domain and port
 3. Script installs dependencies and unzips Foundry
-4. A symlink is created from `instance/data/Data/modules` to the global `~/modules` folder
-5. A test run of Foundry is performed and confirmed
-6. A PM2 process is created and saved
+4. Optional files for additional features are copied by default
+5. Symlinks are created from `instance/Data/modules` and `instance/Data/assets` to the global shared folders
+6. User prompt to set up optional webUI file explorer
 7. Caddy is configured and restarted with the new domain
 8. `options.json` is generated
 9. A swapfile is created based on memory size or a default value
+10. A PM2 process is created and saved
 
 ---
 
@@ -86,8 +87,8 @@ Additional folders are created for each instance (campaign3/, campaign4/, and so
 ```bash
 git clone https://github.com/TripodGG/Foundry-Multi-instance-Install.git
 cd Foundry-Multi-instance-Install
-chmod +x foundry-install.sh
-./foundry-install.sh
+chmod +x foundryinstall.sh
+./foundryinstall.sh
 ```
 
 Run the script again for each additional instance you want to deploy.
@@ -97,7 +98,7 @@ Run the script again for each additional instance you want to deploy.
 ## 🔁 Example Re-run
 
 ```bash
-./foundry-install.sh
+./foundryinstall.sh
 ```
 
 You’ll be prompted to enter a new instance name, domain, and port, and the script will create a new folder structure and symlinks.
@@ -107,7 +108,7 @@ You’ll be prompted to enter a new instance name, domain, and port, and the scr
 ## 🛠 Troubleshooting
 
 If you encounter errors:
-- Check the log file created in `~/yourInstanceName/log/install.log`
+- Check the log file created in `/tmp/foundryinstall/install.log`
 - Make sure ports aren’t reused
 - Ensure DNS records are in place, proxied, and propagated
 
@@ -121,6 +122,7 @@ Built with ❤️ by [TripodGG](https://github.com/TripodGG). Inspired by the Fo
 
 ## 🧪 Future Goals
 
+- Foundry startup test before creating the new instance
 - Single run install for all desired instances
 - Web UI for managing instances
 - Instance update automation
