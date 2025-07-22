@@ -548,8 +548,8 @@ echo -e ${green}"✅ PM2 configuration for $instanceName written and saved."${un
 # Symlink to the global shared assets and modules folders and confirm www-data owns the folders
 log "Creating symlink: $dataDir/Data/assets -> $assetsDir"
 log "Creating symlink: $dataDir/Data/modules -> $modulesDir"
-sudo mkdir "$dataDir/Data/assets"
-sudo mkdir "$dataDir/Data/modules"
+sudo rm -rf "$dataDir/Data/assets"
+sudo rm -rf "$dataDir/Data/modules"
 sudo ln -sfn "$assetsDir" "$dataDir/Data/assets"
 sudo ln -sfn "$modulesDir" "$dataDir/Data/modules"
 if [ -L "$dataDir/Data/assets" ] && [ -L "$dataDir/Data/modules" ]; then
