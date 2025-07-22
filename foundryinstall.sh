@@ -210,7 +210,7 @@ if [[ -z "$instanceName" ]]; then
 	exit 1
 fi
 
-# Create the instance directories then migrate the temp logs to instance logs
+# Create the instance directories then give ownership to www-data
 log "Creating instance directories..."
 echo -e ${yellow}"Creating instance directories..."${undo}
 instanceDir="/foundry_instances/$instanceName"
@@ -219,7 +219,7 @@ assetsDir="/foundry_instances/assets"
 modulesDir="/foundry_instances/modules"
 sudo mkdir -p "$instanceDir" "$dataDir" "$assetsDir" "$modulesDir"
 echo -e ${green}"Instance directories created successfully."${undo}
-
+sudo chown -R www-data:www-data /foundry_instances
 log "Foundry Install Started"
 log "Installer version: $scriptVersion"
 log "Instance name: $instanceName"
@@ -262,20 +262,6 @@ if [ "$deleteZip" = true ]; then
 else
 	log "$filename retained"
 fi
-
-# Symlink to the global shared assets and modules folders
-log "Creating symlink: $dataDir/Data/assets -> $assetsDir"
-log "Creating symlink: $dataDir/Data/modules -> $modulesDir"
-sudo mkdir "$dataDir/Data/assets"
-sudo mkdir "$dataDir/Data/modules"
-sudo ln -sfn "$assetsDir" "$dataDir/Data/assets"
-sudo ln -sfn "$modulesDir" "$dataDir/Data/modules"
-if [ -L "$dataDir/Data/assets" ] && [ -L "$dataDir/Data/modules" ]; then
-	log "✅ Symlinks created successfully."
-else
-	log "❌ Failed to create one or more symlinks."
-fi
-sudo chown -R www-data:www-data /foundry_instances
 
 # ---- Foundry Startup Test ---- #
 # Start Foundry in a new process group (so we can ctrl+c the whole thing)
@@ -558,6 +544,19 @@ sudo -u www-data pm2 save --force >> "$logFile" 2>&1 || { echo "❌ Failed to sa
 
 log "✅ PM2 configuration for $instanceName written and saved."
 echo -e ${green}"✅ PM2 configuration for $instanceName written and saved."${undo}
+
+# Symlink to the global shared assets and modules folders and confirm www-data owns the folders
+log "Creating symlink: $dataDir/Data/assets -> $assetsDir"
+log "Creating symlink: $dataDir/Data/modules -> $modulesDir"
+sudo mkdir "$dataDir/Data/assets"
+sudo mkdir "$dataDir/Data/modules"
+sudo ln -sfn "$assetsDir" "$dataDir/Data/assets"
+sudo ln -sfn "$modulesDir" "$dataDir/Data/modules"
+if [ -L "$dataDir/Data/assets" ] && [ -L "$dataDir/Data/modules" ]; then
+	log "✅ Symlinks created successfully."
+else
+	log "❌ Failed to create one or more symlinks."
+fi
 
 # ---- Finish script and close ---- #
 sudo systemctl start apache2
