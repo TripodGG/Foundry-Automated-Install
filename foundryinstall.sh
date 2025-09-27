@@ -1,109 +1,140 @@
 #!/bin/bash
-# Foundry automated game server install
-# Written by TripodGG
-# This script is designed to automate the process of setting up a dedicated server for FoundryVTT on Ubuntu Linux
-# Version 3.5
+# Name: Foundry Multi-Instance Installer
+# Author: TripodGG
+# Purpose: Automate single or multi-instance Foundry VTT setup on Ubuntu 
+# License: MIT License, Copyright (c) 2025 TripodGG
 
 
 
 
-# Configuration
+# ==========================
+# Configuration & Early Input
+# ==========================
+scriptVersion="4.4"
 set -euo pipefail
 IFS=$'\n\t'
-scriptVersion="3.5"
-currentUser=$(whoami)
-homeDir=$(eval echo ~)
-logFile="/tmp/foundryinstall/install_$(date +%Y%m%d_%H%M%S).log"
-stateFile="/tmp/foundryinstall/state.foundryinstall"
-VERBOSE=false
+
+# Colors for on-screen messages
 red='\033[0;31m'
 yellow='\033[33m'
 green='\033[0;32m'
 undo='\033[0m'
 
-# Functions
-# Logging function
-log() {
-    local message="$1"
-    local timestamp
-    timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] $message" >> "$logFile"
-    if [ "$VERBOSE" = true ]; then
-        echo "[$timestamp] $message"
-    fi
-}
+# Determine user/home; prompt BEFORE redirecting output so this prompt is visible
+detectedUser="$(whoami)"
+read -p "Enter your username [${detectedUser}]: " username
+username=${username:-$detectedUser}
+currentUser="$username"
+homeDir="$(eval echo "~$currentUser")"
+clear
 
-
-# Yes/no prompt
-prompt_yes_no() {
-    local prompt="$1"
-    local var_name="$2"
-    local result
-
-    read -p "$prompt (y/n) [n]: " result
-    result="${result,,}"  # convert to lowercase
-
-    # Default to "no" if empty
-    if [[ -z "$result" || "$result" =~ ^n|no$ ]]; then
-        eval "$var_name=false"
-    elif [[ "$result" =~ ^y|yes$ ]]; then
-        eval "$var_name=true"
-    else
-        echo "Invalid input. Please answer 'y' or 'n'."
-        prompt_yes_no "$prompt" "$var_name"
-    fi
-}
-
-# Cleanup function
-cleanup() {
-	log "⚠️ Installation interrupted or failed. Running cleanup..."
-
-	# Example rollback steps:
-	sudo systemctl stop apache2 || true
-	sudo systemctl restart caddy || true
-	log "Cleaned up background services."
-
-	# Optionally delete partially created files/directories (dangerous if too aggressive)
-	# sudo rm -rf "$instanceDir" "$dataDir"
-
-	echo -e ${red}"⚠️ Installation interrupted. Check the log at $logFile"${undo}
-	exit 1
-}
-
-# Trap INT (Ctrl+C), TERM (kill), and ERR (error if using set -e)
-trap cleanup INT TERM ERR
-
-# Check if step is already done
-checkpoint_done() {
-	grep -q "$1" "$stateFile"
-}
-
-# Mark a checkpoint
-mark_checkpoint() {
-	echo "$1" >> "$stateFile"
-	log "✅ Checkpoint reached: $1"
-}
-
-
-
-
-# ----- Begin Install ----- #
-
-# Create the log file
+# Log file (ensure directory exists)
+logFile="$homeDir/Foundry-Automated-Install/install.log"
 mkdir -p "$(dirname "$logFile")"
+touch "$logFile"
 
-# Ensure script is not ran as root
+# Quiet mode: route all stdout/stderr to the log; keep FD 3/4 for console
+exec 3>&1 4>&2
+exec >>"$logFile" 2>&1
+
+# Verbose toggle for duplicating logs to console when desired
+VERBOSE=false
+
+
+
+# ==========================
+# Helpers (console + logging)
+# ==========================
+ui()   { printf "%b\n" "$*" >&3; }
+ok()   { printf "%b\n" "${green}$*${undo}" >&3; }
+warn() { printf "%b\n" "${yellow}$*${undo}" >&3; }
+err()  { printf "%b\n" "${red}$*${undo}" >&3; }
+
+prompt() {                # prompt "Question: " VAR
+  printf "%s" "$1" >&3
+  read -r "$2" < /dev/tty
+}
+prompt_default() {        # prompt_default "Question" VAR DEFAULT
+  local __msg="$1" __var="$2" __def="$3" __in=""
+  printf "%s [%s]: " "$__msg" "$__def" >&3
+  read -r __in < /dev/tty
+  if [ -z "$__in" ]; then eval "$__var=\"\$__def\""; else eval "$__var=\"\$__in\""; fi
+}
+prompt_secret() {         # prompt_secret "Secret: " VAR
+  printf "%s" "$1" >&3
+  stty -echo < /dev/tty
+  read -r "$2" < /dev/tty
+  stty echo < /dev/tty
+  printf "\n" >&3
+}
+any_key() {               # any_key "Press any key..."
+  printf "%s" "$1" >&3
+  read -r -n 1 _junk < /dev/tty
+  printf "\n" >&3
+}
+
+log() {                   # log only to file; optionally duplicate when VERBOSE=true
+  local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
+  printf "[%s] %s\n" "$ts" "$1"
+  if [ "${VERBOSE:-false}" = true ]; then printf "[%s] %s\n" "$ts" "$1" >&3; fi
+}
+
+# Port helpers for Caddy/system
+port_in_caddy() {
+  local p="$1" caddyFile="/etc/caddy/Caddyfile"
+  [ -f "$caddyFile" ] || return 1
+  grep -qE "localhost:${p}([^0-9]|$)" "$caddyFile"
+}
+port_in_use() {
+  local p="$1"
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnH 2>/dev/null | awk '{print $4}' | grep -qE "(:|\\.)${p}\$"
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -iTCP -sTCP:LISTEN -nP 2>/dev/null | awk '{print $9}' | grep -qE "(:|\\.)${p}\$"
+  else
+    return 1
+  fi
+}
+find_next_free_port() {
+  local from_port=30001
+  local to_port=65000
+
+  # Accept 0, 1, or 2 args without touching unset params (set -u safe)
+  if [ $# -ge 1 ]; then from_port="$1"; fi
+  if [ $# -ge 2 ]; then to_port="$2"; fi
+
+  local p="$from_port"
+  while [ "$p" -le "$to_port" ]; do
+    if ! port_in_caddy "$p" && ! port_in_use "$p"; then
+      printf '%s\n' "$p"
+      return 0
+    fi
+    p=$((p + 1))
+  done
+  return 1
+}
+
+valid_port() { local p="$1"; [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1025 ] && [ "$p" -le 65535 ]; }
+
+# elFinder block detector
+elfinder_block_exists() {
+  local caddyFile="/etc/caddy/Caddyfile" hostPort="$1"
+  [ -f "$caddyFile" ] || return 1
+  grep -qE '^[[:space:]]*# elFinder reverse proxy for file manager' "$caddyFile" && return 0
+  grep -qE "[[:space:]]reverse_proxy[[:space:]]+localhost:${hostPort}([^0-9]|$)" "$caddyFile"
+}
+
+
+
+# ==========================
+# Guardrails & Greeting
+# ==========================
 if [ "$EUID" -eq 0 ]; then
-  echo ${red}"This script must NOT be run as root."${undo}
+  err "This script must NOT be run as root."
   exit 1
 fi
 
-# Clear the screen and start the script
-clear
-
-# Get Instance Info
-echo " "
-cat <<'EOF'
+cat >&3 <<'EOF'
 
    ____                  __           _   ______________
   / __/__  __ _____  ___/ /_____ __  | | / /_  __/_  __/
@@ -115,470 +146,541 @@ cat <<'EOF'
      /___/_//_/___/\__/\_,_/_/_/\__/_/                  
                                                         
 
-
 EOF
-echo " "
-echo "Welcome, $currentUser, to the Foundry VTT Multi-Instance Installer"
-echo "----------------------------------------------"
-echo "This installer will prompt you for basic information about your Foundry instance."
-read -n 1 -p "Press any key to begin the initial setup process."
-echo "Begining installation. Please wait..."
-sleep 3
-
-
-
+ui "Welcome, $currentUser, to the Foundry VTT Multi-Instance Installer"
+ui "----------------------------------------------"
+ui "This installer will prompt you for basic information about your Foundry instance."
+ui "It is recommended that you use a dedicated user separate from your own to host Foundry VTT."
+any_key "Press any key to begin the initial setup process..."
+ok  "Beginning installation. Please wait..."
 log "🚀 Starting FoundryVTT install script (v$scriptVersion) for user $currentUser"
 
-# ---- Update the system packages ---- #
-log "Updating system packages..."
 
-# update packages
+
+# ==========================
+# System Prep & Packages
+# ==========================
+log "Updating system packages (base)..."
+warn "Updating system packages..."
 sudo apt update && sudo apt upgrade -y
 
-# create keyrings directory & file for caddy
+# Caddy repo & NodeSource
 sudo mkdir -p /etc/apt/keyrings
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-# check for keyring file, create it if needed, skip if not
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg ca-certificates
+
 if [ ! -f /usr/share/keyrings/caddy-stable-archive-keyring.gpg ]; then
-	curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-	log "Caddy GPG key added"
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  log "Caddy GPG key added"
 else
-	log "Caddy GPG key already exists, skipping"
+  log "Caddy GPG key already exists, skipping"
 fi
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list > /dev/null
 curl -sL https://deb.nodesource.com/setup_20.x | sudo bash -
 
-# ---- Install base applications ---- #
+sudo apt update
 log "Installing dependencies..."
-echo -e ${yellow}"Installing dependencies..."${undo}
+warn "Installing dependencies..."
+sudo apt install -y unzip net-tools libssl-dev nodejs apache2 git php composer caddy
+sudo npm install -g pm2
 
-sudo apt install ca-certificates curl gnupg unzip net-tools libssl-dev nodejs apache2 git php composer caddy -y
-sudo npm install pm2 -g
 
-# ---- Check for elFinder installation ---- #
-echo "Checking for elFinder installation."
-log "Checking for elFinder installation."
+
+# ==========================
+# elFinder File Manager
+# ==========================
+ui  "Checking for File Manager installation."
+log "Checking for elFinder file manager installation."
 if [ ! -d "/var/www/elFinder-2.1.64" ]; then
-    echo "elFinder not found. Installing..."
-	log "elFinder not found. Installing..."
+  ui  "File Manager not found. Installing..."
+  log "elFinder file manager not found. Installing..."
 
-    # ---- Install elFinder ---- #
-    # Grab the install from GitHub and unzip
-	cd /var/www/
-	sudo wget -O elFinder.zip https://github.com/Studio-42/elFinder/archive/refs/tags/2.1.64.zip
-    sudo unzip elFinder.zip
-    sudo rm elFinder.zip
+  pushd /var/www >/dev/null
+  sudo wget -O elFinder.zip https://github.com/Studio-42/elFinder/archive/refs/tags/2.1.64.zip
+  sudo unzip -o elFinder.zip && sudo rm elFinder.zip
 
-    # Create the index file and take ownership of www directory
-    sudo mv /var/www/elFinder-2.1.64/elfinder.html /var/www/elFinder-2.1.64/index.html
-    sudo cp $homeDir/Foundry-Automated-Install/connector.minimal.php /var/www/elFinder-2.1.64/php/connector.minimal.php
-	sudo cp $homeDir/Foundry-Automated-Install/roots.config.php /var/www/elFinder-2.1.64/php/roots.config.php
-    sudo chown -R www-data:www-data /var/www/
+  sudo mv /var/www/elFinder-2.1.64/elfinder.html /var/www/elFinder-2.1.64/index.html
+  sudo cp "$homeDir/Foundry-Automated-Install/connector.minimal.php" /var/www/elFinder-2.1.64/php/connector.minimal.php
+  sudo cp "$homeDir/Foundry-Automated-Install/roots.config.php"      /var/www/elFinder-2.1.64/php/roots.config.php
+  sudo chown -R "$currentUser:$currentUser" /var/www/elFinder-2.1.64
+  popd >/dev/null
 
-    # Create the elFinder config
-    sudo systemctl stop apache2
-    sudo sed -i 's/^Listen 80/Listen 29999/' /etc/apache2/ports.conf
-    echo '
+  # vhost for port 29999 (no ports.conf edits here)
+  sudo tee /etc/apache2/sites-available/elfinder.conf > /dev/null <<'APACHECONF'
 <VirtualHost *:29999>
-	DocumentRoot /var/www/elFinder-2.1.64
+    DocumentRoot /var/www/elFinder-2.1.64
 </VirtualHost>
-' | sudo tee -a /etc/apache2/sites-available/elfinder.conf > /dev/null
+APACHECONF
 
-    # Disable other sites, enable elFinder
-    for site in /etc/apache2/sites-enabled/*.conf; do
-        siteName=$(basename "$site")
-        if [[ "$siteName" != "elfinder.conf" ]]; then
-            sudo a2dissite "$siteName"
-        fi
-    done
-    sudo a2ensite elfinder.conf
+  sudo a2ensite elfinder.conf >/dev/null
 
-    echo "elFinder installation complete."
-	log "elFinder installation complete."
+  ok  "File Manager installation complete."
+  log "elFinder file manager installation complete."
 else
-    echo "elFinder already installed. Skipping installation."
-	log "elFinder already installed. Skipping installation."
+  ui  "File Manager already installed. Skipping installation."
+  log "elFinder file manager already installed. Skipping installation."
 fi
 
-# ---- Install Foundry ---- #
-# Prompt for the instance name
-read -p "Enter a unique name for this instance (e.g., campaign1): " instanceName
 
+
+# ==========================
+# Apache Ports Harmonization (Caddy owns :80/:443)
+# ==========================
+portsconf="/etc/apache2/ports.conf"
+log "Ensuring Apache is not binding to :80/:443 (reserved for Caddy) and is listening on :29999."
+
+# Comment out default HTTP/HTTPS listens
+if grep -qE '^\s*Listen\s+80\b' "$portsconf"; then
+  sudo sed -i -E 's/^\s*Listen\s+80\b/# Disabled by Foundry installer: Listen 80/' "$portsconf"
+  log "Commented out 'Listen 80' in $portsconf"
+fi
+if grep -qE '^\s*Listen\s+443\b' "$portsconf"; then
+  sudo sed -i -E 's/^\s*Listen\s+443\b/# Disabled by Foundry installer: Listen 443/' "$portsconf"
+  log "Commented out 'Listen 443' in $portsconf"
+fi
+
+# Ensure port 29999 is present
+if ! grep -qE '^\s*Listen\s+29999\b' "$portsconf"; then
+  echo 'Listen 29999' | sudo tee -a "$portsconf" > /dev/null
+  log "Added 'Listen 29999' to $portsconf"
+fi
+
+# Disable any enabled vhost that binds to :80 or :443
+for site in /etc/apache2/sites-enabled/*.conf; do
+  if grep -qE '<VirtualHost\s+\*:(80|443)>' "$site"; then
+    sudo a2dissite "$(basename "$site")" > /dev/null || true
+    log "Disabled site $(basename "$site") because it binds to :80 or :443"
+  fi
+done
+
+# Validate and apply
+if ! sudo apachectl configtest; then
+  err "Apache config test failed. See $logFile"
+  exit 1
+fi
+sudo systemctl reload apache2 || true
+
+
+
+# ==========================
+# Instance Basics & Folders
+# ==========================
+prompt "Enter a unique name for this instance (e.g., campaign1): " instanceName
 if [[ -z "$instanceName" ]]; then
-	log "❌ Instance name cannot be empty."
-	echo -e ${red}"❌ An error has occured. Please check the log file for details. $logFile"${undo}
-	exit 1
-fi
-
-# Create the instance directories then give ownership to www-data
-log "Creating instance directories..."
-echo -e ${yellow}"Creating instance directories..."${undo}
-instanceDir="/foundry_instances/$instanceName"
-dataDir="/foundry_instances/foundrydata/$instanceName"
-assetsDir="/foundry_instances/assets"
-modulesDir="/foundry_instances/modules"
-sudo mkdir -p "$instanceDir" "$dataDir" "$assetsDir" "$modulesDir"
-echo -e ${green}"Instance directories created successfully."${undo}
-sudo chown -R www-data:www-data /foundry_instances
-log "Foundry Install Started"
-log "Installer version: $scriptVersion"
-log "Instance name: $instanceName"
-log "Directories created: $instanceDir, $dataDir, $assetsDir, $modulesDir"
-
-# Prompt for Foundry URL
-read -p "Enter the Foundry VTT download URL: " foundryUrl
-
-# Move to install directory
-cd "$instanceDir" || { log "❌ Failed to enter $instanceDir"; echo -e ${red}"An error has occurred. Please check the log file for details. $logFile"${undo}; exit 1; }
-
-# Download Foundry VTT
-log "Downloading Foundry VTT..."
-echo -e ${yellow}"Downloading Foundry VTT..."${undo}
-filename=foundryvtt.zip
-sudo wget -O $filename "$foundryUrl" 2>&1 | sudo tee -a "$logFile" > /dev/null || { log "❌ Download failed. Check the URL. Did it expire?"; echo -e ${red}"❌ An error has occurred. Please check the log file for details. $logFile"${undo}; exit 1; }
-log "Download complete: $filename"
-echo -e ${green}"Download complete."${undo}
-
-# Unzip the FoundryVTT file
-log "Unzipping $filename..."
-sudo unzip "$filename" 2>&1 | sudo tee -a "$logFile" > /dev/null || {
-	log "❌ Failed to unzip archive."
-	echo -e ${red}"❌ An error has occurred. Please check the log file for details. $logFile"${undo}
-	exit 1
-}
-echo -e ${yellow}"Unzipping Foundry VTT to $instanceDir..."${undo}
-echo -e ${yellow}"This may take some time. Please wait..."${undo}
-
-# Ensure main.js is executable
-sudo chmod 755 "$instanceDir/resources/app/main.js" 2>&1 | sudo tee -a "$logFile" > /dev/null
-log "Ensured $instanceDir/resources/app/main.js is now executable."
-echo -e ${green}"Foundry VTT install complete."${undo}
-
-# Prompt to delete the zip file
-prompt_yes_no "Would you like to delete the Foundry ZIP file to save space?" deleteZip
-if [ "$deleteZip" = true ]; then
-	sudo rm "$filename"
-	log "$filename deleted"
-else
-	log "$filename retained"
-fi
-
-# ---- Foundry Startup Test ---- #
-# Start Foundry in a new process group (so we can ctrl+c the whole thing)
-
-
-# ---- Write the Caddy file ---- #
-caddyFile="/etc/caddy/Caddyfile"
-hostPort="29999"
-
-read -p "Enter the URL that will be used for this instance (e.g. gamename.example.com): " instanceUrl
-read -p "Enter the port number to use for this instance (e.g. 30001, 30002, etc.): " instancePort
-
-if ! [[ "$instancePort" =~ ^[0-9]+$ ]] || [ "$instancePort" -le 1024 ] || [ "$instancePort" -gt 65535 ]; then
-  log "❌ Invalid port number: $instancePort. Port number must be between 1025-65535."
-  echo -e ${red}"❌ An error has occurred. Please check the log file for details. $logFile"${undo}
+  err "❌ Instance name cannot be empty."
+  log "❌ Instance name cannot be empty."
   exit 1
 fi
 
-log "Clearing Caddyfile..."
+log "Creating required directories..."
+warn "Creating required directories..."
+for folder in "$homeDir/foundryvtt" "$homeDir/foundrydata"; do
+  if [ -d "$folder" ]; then
+    ui  "$folder already exists. Skipping"
+    log "$folder already exists. Skipping"
+  else
+    ui  "Creating folder: $folder"
+    log "Creating folder: $folder"
+    mkdir -p "$folder"
+  fi
+done
 
-# Remove legacy :80 block if present
-if grep -q '^:80[[:space:]]*{' "$caddyFile"; then
-	sudo sed -i '/^:80[[:space:]]*{/,/^[[:space:]]*}/d' "$caddyFile"
-	log "Removed :80 block from Caddyfile."
+installDir="$homeDir/foundryvtt"
+dataDir="$homeDir/foundrydata/$instanceName"
+sudo mkdir -p "$dataDir"
+ok  "Instance directories created successfully."
+log "$dataDir directory created successfully"
+log "Foundry Install Started"
+log "Installer version: $scriptVersion"
+log "Instance name: $instanceName"
+
+
+
+# ==========================
+# Foundry Download / Unzip
+# ==========================
+filename="$installDir/foundryvtt.zip"
+
+if [ -z "$(ls -A "$installDir" 2>/dev/null)" ]; then
+  warn "No data found in $installDir"
+  prompt "Enter your Foundry VTT download URL: " foundryUrl
+
+  if [ -n "$foundryUrl" ]; then
+    log "Downloading Foundry VTT"
+    warn "Downloading Foundry VTT..."
+    cd "$installDir" || { log "Failed to enter $installDir"; err "❌ See $logFile"; exit 1; }
+    sudo wget -O "$filename" "$foundryUrl" || { log "❌ Download failed. URL expired?"; err "❌ See $logFile"; exit 1; }
+    log "Download complete: $filename"
+    ok  "Download complete."
+  else
+    ui  "No URL provided. Exiting."
+    exit 1
+  fi
 else
-	log "No :80 block found. Nothing to do."
+  log "Foundry VTT install found. Skipping download."
 fi
 
-# Write the Foundry instance entry
-log "Writing Caddy config for $instanceUrl on port $instancePort..."
+if [ -f "$filename" ]; then
+  warn "Unzipping Foundry VTT to $installDir..."
+  warn "This may take some time. Please wait..."
+  log "Unzipping $filename..."
+  sudo unzip -o "$filename" -d "$installDir" || { log "❌ Failed to unzip archive."; err "❌ See $logFile"; exit 1; }
+else
+  log "No archive found at $filename. Skipping unzip."
+fi
+
+if [ -f "$installDir/resources/app/main.js" ]; then
+  sudo chmod 755 "$installDir/resources/app/main.js"
+  log "Ensured $installDir/resources/app/main.js is now executable."
+fi
+ok  "Foundry VTT install complete."
+
+deleteZip="false"
+prompt_yes_no() { # reuse a tiny yes/no specifically for this one question
+  local q="$1" var="$2" ans=""
+  printf "%s (y/n) [n]: " "$q" >&3
+  read -r ans < /dev/tty
+  ans="${ans,,}"
+  if [[ -z "$ans" || "$ans" =~ ^(n|no)$ ]]; then eval "$var=false"
+  elif [[ "$ans" =~ ^(y|yes)$ ]]; then eval "$var=true"
+  else
+    ui "Invalid input. Please answer 'y' or 'n'."
+    prompt_yes_no "$q" "$var"
+  fi
+}
+prompt_yes_no "Would you like to delete the Foundry ZIP file to save space?" deleteZip
+if [ "$deleteZip" = true ] && [ -f "$filename" ]; then
+  sudo rm -f "$filename"
+  log "$(basename "$filename") deleted"
+else
+  log "$(basename "$filename") retained (or not present)"
+fi
+
+
+
+# ==========================
+# Caddyfile Prep & Cleanup
+# ==========================
+caddyFile="/etc/caddy/Caddyfile"
+hostPort="29999"
+
+sudo touch "$caddyFile"
+log "Clearing Caddyfile legacy blocks if present..."
+if grep -q '^:80[[:space:]]*{' "$caddyFile"; then
+  sudo sed -i '/^:80[[:space:]]*{/,/^[[:space:]]*}/d' "$caddyFile"
+  log "Removed :80 block from Caddyfile."
+else
+  log "No :80 block found. Nothing to do."
+fi
+
+
+
+# ==========================
+# URL & Port Prompts
+# ==========================
+while :; do
+  prompt "Enter the URL that will be used for this instance (e.g. gamename.example.com): " instanceUrl
+  if [ -z "$instanceUrl" ] || ! [[ "$instanceUrl" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+    err  "❌ Invalid URL format. Try again."
+    log "❌ Invalid URL format: $instanceUrl"
+    continue
+  fi
+  if grep -qE "^[[:space:]]*${instanceUrl}[[:space:]]*\\{" "$caddyFile"; then
+    warn "⚠️ $instanceUrl already exists in $caddyFile. Enter a different URL."
+    log  "⚠️ $instanceUrl already exists in $caddyFile"
+    continue
+  fi
+  break
+done
+
+suggestedPort="$(find_next_free_port 30001 65000 || echo 30001)"
+while :; do
+  printf "Enter the port number to use for this instance (e.g. 30001, 30002) [%s]: " "$suggestedPort" >&3
+  read -r instancePort < /dev/tty
+  instancePort="${instancePort:-$suggestedPort}"
+
+  if ! valid_port "$instancePort"; then
+    err "❌ Invalid port. Please enter a value between 1025–65535."
+    log "❌ Invalid port number: $instancePort"
+    continue
+  fi
+  if port_in_caddy "$instancePort"; then
+    warn "⚠️ Port $instancePort already referenced in $caddyFile. Choose a different port."
+    log  "⚠️ Port $instancePort already referenced in $caddyFile"
+    suggestedPort="$(find_next_free_port $((instancePort + 1)) 65000 || echo 30001)"
+    continue
+  fi
+  if port_in_use "$instancePort"; then
+    warn "⚠️ Port $instancePort already in use on this system. Choose a different port."
+    log  "⚠️ Port $instancePort appears to be in use"
+    suggestedPort="$(find_next_free_port $((instancePort + 1)) 65000 || echo 30001)"
+    continue
+  fi
+  break
+done
+
+
+
+# ==========================
+# Write Instance Caddy Block
+# ==========================
 caddyEntry="
 # FoundryVTT instance: $instanceName
 $instanceUrl {
-	reverse_proxy localhost:$instancePort
-	encode zstd gzip
-}"
-if ! grep -q "$instanceUrl" "$caddyFile"; then
-	echo "$caddyEntry" | sudo tee -a "$caddyFile" > /dev/null
-	log "Caddyfile entry appended for $instanceUrl"
+    reverse_proxy localhost:$instancePort
+    encode zstd gzip
+}
+"
+
+if ! grep -qE "^[[:space:]]*${instanceUrl}[[:space:]]*\\{" "$caddyFile"; then
+  echo "$caddyEntry" | sudo tee -a "$caddyFile" > /dev/null
+  log "✅ Caddyfile entry appended for $instanceUrl on port $instancePort"
+  ok  "✅ Added Caddy entry for $instanceUrl (port $instancePort)."
 else
-	log "Caddyfile already contains an entry for $instanceUrl. Skipping append."
+  log "ℹ️ Caddyfile already contains an entry for $instanceUrl. Skipping append."
+  warn "ℹ️ $instanceUrl already present in $caddyFile. Skipping append."
 fi
 
-# Check if elFinder port is already configured
-log "Checking Caddyfile for host port # $hostPort..."
-echo "Checking Caddyfile for host port # $hostPort..."
 
-if grep -q "$hostPort" "$caddyFile"; then
-	echo -e ${yellow}"⚠️ Port $hostPort already configured in $caddyFile. Skipping elFinder setup."${undo}
-	log "⚠️ Port $hostPort already configured in $caddyFile. Skipping elFinder reverse proxy setup."
+
+# ==========================
+# File Manager Reverse Proxy (skip prompts if exists)
+# ==========================
+if elfinder_block_exists "$hostPort"; then
+  log  "ℹ️ File manager reverse proxy already configured in $caddyFile. Skipping."
+  warn "ℹ️ File manager reverse proxy already configured. Skipping."
 else
-	# Prompt to ask if elFinder should be configured
-	prompt_yes_no "Would you like to set up the file explorer webUI?" setupElFinder
-	if [ "$setupElFinder" = true ]; then
-		# Prompt for elFinder host/domain
-		read -r -p "Enter the elFinder host/domain (e.g. your.domain.com): " elFinderhost
-		if [[ -z "$elFinderhost" ]]; then
-			log "❌ elFinder host/domain cannot be blank."
-			echo -e ${red}"❌ An error has occurred. Please check the log file for details. $logFile"${undo}
-			exit 1
-		fi
+  prompt "Enter hostname for file manager (e.g., files.example.com): " elFinderhost
+  if [[ -z "$elFinderhost" ]]; then
+    err "❌ File manager hostname cannot be empty."
+    exit 1
+  fi
+  # Ensure hostname isn't already defined as a site label
+  esc_host="$(printf '%s' "$elFinderhost" | sed -e 's/[][(){}.^$*+?|\\]/\\&/g')"
+  if grep -qE "^[[:space:]]*${esc_host}[[:space:]]*\\{" "$caddyFile"; then
+    warn "⚠️ Host '${elFinderhost}' already defined in $caddyFile. Choose a different hostname."
+    log  "⚠️ Host '${elFinderhost}' already defined in $caddyFile"
+    exit 1
+  fi
 
-		# Get credentials securely
-		read -r -p "Enter a username for file manager: " USERNAME
-		read -r -s -p "Enter a password for file manager: " PASSWORD
-		echo ""
+  prompt "Enter a username for file manager: " FM_USERNAME
+  prompt_secret "Enter a password for file manager: " FM_PASSWORD
+  err "Do not lose this information as it cannot be recovered."
 
-		# Hash password using Caddy
-		HASH=$(caddy hash-password <<< "$PASSWORD")
-		if [[ -z "$HASH" ]]; then
-			log "❌ Failed to generate password hash with caddy hash-password."
-			echo -e ${red}"❌ An error has occurred while hashing password. Please check the log file for details. $logFile"${undo}
-			exit 1
-		fi
+  HASH="$(caddy hash-password <<< "$FM_PASSWORD" || true)"
+  if [[ -z "${HASH:-}" ]]; then
+    log "❌ Failed to generate password hash with caddy hash-password."
+    err "❌ An error has occurred while hashing password. See $logFile"
+    exit 1
+  fi
 
-		# Append reverse proxy block
-		log "Appending reverse proxy block for $elFinderhost on port 29999..."
-		sudo tee -a "$caddyFile" > /dev/null <<EOF
+  log "Appending reverse proxy block for $elFinderhost on port $hostPort..."
+  sudo tee -a "$caddyFile" > /dev/null <<EOF
 
 # elFinder reverse proxy for file manager
 $elFinderhost {
-    reverse_proxy 127.0.0.1:29999
+    reverse_proxy localhost:$hostPort
 
     basicauth {
-        $USERNAME $HASH
+        $FM_USERNAME $HASH
     }
 
-    tls
+    
 }
 EOF
 
-		if [[ $? -eq 0 ]]; then
-			log "✅ Successfully added reverse proxy block for $elFinderhost"
-		else
-			log "❌ Failed to append reverse proxy block to $caddyFile."
-			echo -e ${red}"❌ An error has occurred. Please check the log file for details. $logFile"${undo}
-			exit 1
-		fi
-	else
-		log "User declined to set up elFinder. Skipping file explorer reverse proxy block."
-	fi
+  if [[ $? -eq 0 ]]; then
+    log "✅ Successfully added file manager block"
+  else
+    log "❌ Failed to append file manager block to $caddyFile."
+    err "❌ An error has occurred. See $logFile"
+    exit 1
+  fi
 fi
 
+
+
+# ==========================
 # Restart Caddy
+# ==========================
 log "Restarting Caddy service..."
-if sudo systemctl restart caddy 2>&1 | sudo tee -a "$logFile" > /dev/null; then
-	log "✅ Caddy restarted successfully"
+if sudo systemctl restart caddy; then
+  log "✅ Caddy restarted successfully"
 else
-	log "❌ Caddy failed to restart"
-	echo -e ${red}"❌ An error has occurred. Please check the log file for details. $logFile"${undo}
-	exit 1
+  log "❌ Caddy failed to restart"
+  err "❌ An error has occurred. See $logFile"
+  exit 1
 fi
 
-# ---- Write Options.json file ---- #
-optionsFile="$dataDir/Config/options.json"
-sudo mkdir -p "$dataDir/Config"
-log "Writing options.json..."
 
+
+# ==========================
+# Write options.json
+# ==========================
+configDir="$dataDir/Config"
+optionsFile="$configDir/options.json"
+backupFile="$configDir/options.json.bak"
+
+sudo mkdir -p "$configDir"
+if [ -f "$optionsFile" ]; then
+  cp "$optionsFile" "$backupFile"
+  log "📦 Existing options.json backed up to options.json.bak"
+fi
+
+log "Writing new options.json to $optionsFile..."
 sudo tee "$optionsFile" > /dev/null <<EOF
 {
-"dataPath": "$dataDir",
-"compressStatic": true,
-"fullscreen": false,
-"hostname": "$instanceUrl",
-"language": "en.core",
-"localHostname": null,
-"port": $instancePort,
-"protocol": null,
-"proxyPort": 443,
-"proxySSL": true,
-"routePrefix": null,
-"updateChannel": "stable",
-"upnp": true,
-"upnpLeaseDuration": null,
-"awsConfig": null,
-"compressSocket": true,
-"cssTheme": "foundry",
-"deleteNEDB": false,
-"hotReload": false,
-"passwordSalt": null,
-"sslCert": null,
-"sslKey": null,
-"world": null,
-"serviceConfig": null
+  "dataPath": "$dataDir",
+  "compressStatic": true,
+  "fullscreen": false,
+  "hostname": "$instanceUrl",
+  "language": "en.core",
+  "localHostname": null,
+  "port": $instancePort,
+  "protocol": null,
+  "proxyPort": 443,
+  "proxySSL": true,
+  "routePrefix": null,
+  "updateChannel": "stable",
+  "upnp": true,
+  "upnpLeaseDuration": null,
+  "awsConfig": null,
+  "compressSocket": true,
+  "cssTheme": "foundry",
+  "deleteNEDB": false,
+  "hotReload": false,
+  "passwordSalt": null,
+  "sslCert": null,
+  "sslKey": null,
+  "world": null,
+  "serviceConfig": null
 }
 EOF
 
 if [ -f "$optionsFile" ]; then
-	log "✅ options.json written successfully"
+  log "✅ options.json written successfully"
 else
-	log "❌ Failed to write options.json. Check permissions."
-	echo -e ${red}"❌ An error has occurred. Please check the log file for details. $logFile"${undo}
-	exit 1
+  log "❌ Failed to write options.json. Attempting to restore from backup..."
+  if [ -f "$backupFile" ]; then
+    cp "$backupFile" "$optionsFile"
+    log "✅ Restored original options.json from backup"
+    ui  "❌ New config failed. Restored previous config file."
+  else
+    log "❌ No backup available to restore."
+    err "❌ An error has occurred. See $logFile"
+  fi
+  exit 1
 fi
 
-# ---- Make Swap file ---- #
-# Detect system memory and recommend swap size
+
+
+# ==========================
+# Swap File (optional/once)
+# ==========================
 memTotalKB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-memTotalGB=$(( (memTotalKB + 1048575) / 1048576 ))  # Round up
+memTotalGB=$(( (memTotalKB + 1048575) / 1048576 ))
 log "System memory detected: ${memTotalGB}GB"
 
-# Recommend swap size based on total memory
 if [ "$memTotalGB" -lt 2 ]; then
-	recommendedSwapSize=$((memTotalGB * 2))
+  recommendedSwapSize=$((memTotalGB * 2))
 elif [ "$memTotalGB" -le 4 ]; then
-	recommendedSwapSize=$((memTotalGB + memTotalGB / 2))  # 1.5x
+  recommendedSwapSize=$((memTotalGB + memTotalGB / 2))
 elif [ "$memTotalGB" -le 8 ]; then
-	recommendedSwapSize=$memTotalGB
+  recommendedSwapSize=$memTotalGB
 else
-	recommendedSwapSize=2
+  recommendedSwapSize=2
 fi
-
 log "Recommended swap size: ${recommendedSwapSize}G"
 
-# Prompt for swap size
-read -p "Enter the size of the swapfile in GB (default is 2G, recommended: ${recommendedSwapSize}G), or press enter if this step has already been completed in a previous instance installation: " swapSizeInput
-
-# If input is blank, use default
+printf "Enter the size of the swapfile in GB (default 2G, recommended: %sG), or press enter if already completed: " "$recommendedSwapSize" >&3
+read -r swapSizeInput < /dev/tty
 if [ -z "$swapSizeInput" ]; then
-	swapSizeGB=2
-	log "No swap size entered. Defaulting to 2G"
+  swapSizeGB=2
+  log "No swap size entered. Defaulting to 2G"
 else
-	# Normalize input and remove unit
-	swapSizeInput=$(echo "$swapSizeInput" | tr '[:lower:]' '[:upper:]')
-	swapSizeGB=$(echo "$swapSizeInput" | sed 's/G[B]*$//')
-
-	# Validate that it's numeric
-	if ! [[ "$swapSizeGB" =~ ^[0-9]+$ ]]; then
-		log "❌ Invalid swap size entered: $swapSizeInput"
-		echo -e ${red}"❌ Invalid input. Please enter a whole number (e.g. 2 or 2G)"${undo}
-		echo -e ${red}"❌ An error has occured. Please check the log file for details. $logFile"${undo}
-		exit 1
-	fi
+  swapSizeInput=$(echo "$swapSizeInput" | tr '[:lower:]' '[:upper:]')
+  swapSizeGB=$(echo "$swapSizeInput" | sed 's/G[B]*$//')
+  if ! [[ "$swapSizeGB" =~ ^[0-9]+$ ]]; then
+    log "❌ Invalid swap size entered: $swapSizeInput"
+    err "❌ Invalid input. Please enter a whole number (e.g. 2 or 2G)"
+    err "❌ See $logFile"
+    exit 1
+  fi
 fi
-
 swapSize="${swapSizeGB}G"
 log "User selected swap size: $swapSize"
 
-# Create swapfile
-log "Creating $swapSize swapfile at /swapfile..."
-sudo fallocate -l "$swapSize" /swapfile 2>&1 | sudo tee -a "$logFile" > /dev/null
-sudo chmod 600 /swapfile 2>&1 | sudo tee -a "$logFile" > /dev/null
-sudo mkswap /swapfile 2>&1 | sudo tee -a "$logFile" > /dev/null && log "Swapfile created and marked as swap space"
-
-# Add to /etc/fstab if not already present
-if ! grep -q "^/swapfile" /etc/fstab; then
-	echo "/swapfile swap swap defaults 0 0" | sudo tee -a /etc/fstab > /dev/null
-	log "Swapfile entry added to /etc/fstab"
+if [ -f /swapfile ]; then
+  log "/swapfile already exists. Skipping creation."
 else
-	log "Swapfile entry already present in /etc/fstab"
+  log "Creating $swapSize swapfile at /swapfile..."
+  sudo fallocate -l "$swapSize" /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile && log "Swapfile created and marked as swap space"
+  if ! grep -q "^/swapfile" /etc/fstab; then
+    echo "/swapfile swap swap defaults 0 0" | sudo tee -a /etc/fstab > /dev/null
+    log "Swapfile entry added to /etc/fstab"
+  else
+    log "Swapfile entry already present in /etc/fstab"
+  fi
+  log "Enabling swapfile..."
+  sudo swapon -a
 fi
 
-# Enable swap
-log "Enabling swapfile..."
-sudo swapon -a 2>&1 | sudo tee -a "$logFile" > /dev/null
-
-# Confirm and log the results
 log "Swap status:"
-sudo swapon --show | tee -a "$logFile"
+sudo swapon --show
 
-# ----- PM2 Setup ----- #
 
-log "🔧 Preparing PM2 environment for www-data user..."
-echo "🔧 Configuring PM2..."
 
-pm2Dir="/var/www/.pm2"
-ecosystemFile="$pm2Dir/ecosystem.config.js"
+# ==========================
+# PM2 Setup (Foundry App)
+# ==========================
+log "🔧 Preparing PM2 environment..."
+ui  "🔧 Configuring PM2..."
 
-# Ensure the PM2 directory exists
-if [ ! -d "$pm2Dir" ]; then
-    sudo mkdir -p "$pm2Dir" || { echo "❌ Failed to create $pm2Dir"; log "❌ Failed to create $pm2Dir"; exit 1; }
-    sudo chown www-data:www-data "$pm2Dir"
-    log "Created $pm2Dir"
-fi
+startCommand="node $installDir/resources/app/main.js --dataPath=$dataDir"
 
-# Define the new app block
-appBlock="    {
-      name: \"$instanceName\",
-      script: \"$instanceDir/resources/app/main.js\",
-      args: \"--dataPath=$dataDir\",
-      interpreter: \"node\",
-      env: {
-        NODE_OPTIONS: \"--max-old-space-size=4096\"
-      }
-    }"
+ui  "Starting PM2 process for $instanceName"
+pm2 start "$startCommand" --name "$instanceName" --watch && log "PM2 process '$instanceName' started with watch enabled"
+sleep 1
+ui  "PM2 process '$instanceName' started with watch enabled"
+sleep 1
+ui  "Saving PM2 process list..."
+pm2 save --force && log "PM2 configuration saved for $instanceName startup"
+sleep 1
+ui  "PM2 configuration saved for $instanceName startup"
 
-# Append or create the ecosystem config
-if sudo test -f "$ecosystemFile"; then
-    log "Appending instance to existing ecosystem.config.js"
-    
-    # Remove the last two lines (the closing array and module exports bracket)
-    sudo sed -i '$d' "$ecosystemFile"
-    sudo sed -i '$d' "$ecosystemFile"
+log "Ensuring foundry folders are created (PM2 cycle)"
+ui  "Restarting all pm2 processes..."
+pm2 start all
+pm2 stop all
 
-    # Append the new instance block
-    echo "," | sudo tee -a "$ecosystemFile" > /dev/null
-    echo "$appBlock" | sudo tee -a "$ecosystemFile" > /dev/null
-    echo "  ]" | sudo tee -a "$ecosystemFile" > /dev/null
-    echo "};" | sudo tee -a "$ecosystemFile" > /dev/null
-else
-    log "Creating new ecosystem.config.js"
-    {
-      echo "module.exports = {"
-      echo "  apps: ["
-      echo "$appBlock"
-      echo "  ]"
-      echo "};"
-    } | sudo tee "$ecosystemFile" > /dev/null || { echo "❌ Failed to write ecosystem file"; log "❌ Failed to write ecosystem file"; exit 1; }
-fi
 
-# Start PM2 as www-data
-log "Starting PM2 process for $instanceName"
-echo "Starting PM2 process for $instanceName"
-sudo -u www-data pm2 start "$ecosystemFile" >> "$logFile" 2>&1 || { echo "❌ Failed to start PM2"; log "❌ Failed to start PM2"; exit 1; }
 
-# Save PM2 state
-log "Saving PM2 process list..."
-echo "Saving PM2 process list..."
-sudo -u www-data pm2 save --force >> "$logFile" 2>&1 || { echo "❌ Failed to save PM2 process list"; log "❌ Failed to save PM2 process list"; exit 1; }
-
-log "✅ PM2 configuration for $instanceName written and saved."
-echo -e ${green}"✅ PM2 configuration for $instanceName written and saved."${undo}
-
-# Ensure PM2 has started and stopped foundry (verifying folders are created)
-log "Ensuring foundry folders are created..."
-sudo -u www-data pm2 start all
-log "Stopping Foundry..."
-sudo -u www-data pm2 stop all
-sleep 5
-
-# Symlink to the global shared assets and modules folders and confirm www-data owns the folders
-log "Removing default folder: $dataDir/Data/assets"
-log "Removing default folder: $dataDir/Data/modules"
-sudo rm -R "$dataDir/Data/assets"
-sudo rm -R "$dataDir/Data/modules"
-log "Creating symlink: $assetsDir -> $dataDir/Data/assets"
-log "Creating symlink: $modulesDir -> $dataDir/Data/modules"
-log "Creating symlink: $instanceDir -> $dataDir"
-sudo ln -sfn "$assetsDir" "$dataDir/Data/assets"
-sudo ln -sfn "$modulesDir" "$dataDir/Data/modules"
-sudo ln -sfn "$instanceDir" "dataDir"
-if [ -L "$dataDir/Data/assets" ] && [ -L "$dataDir/Data/modules" ]; then
-	log "✅ Symlinks created successfully."
-else
-	log "❌ Failed to create one or more symlinks."
-fi
-
-# Restart Foundry
-sudo -u www-data pm2 start all
-
-# ---- Finish script and close ---- #
+# ==========================
+# Wrap Up
+# ==========================
 sudo systemctl start apache2
+pm2 start all
+
+cat >&3 <<'EOF'
+
+    ____           __        ____            
+   /  _/___  _____/ /_____ _/ / /            
+   / // __ \/ ___/ __/ __ `/ / /             
+ _/ // / / (__  ) /_/ /_/ / / /              
+/___/_/_/_/____/\__/\__,_/_/_/ __     __     
+  / ____/___  ____ ___  ____  / /__  / /____ 
+ / /   / __ \/ __ `__ \/ __ \/ / _ \/ __/ _ \
+/ /___/ /_/ / / / / / / /_/ / /  __/ /_/  __/
+\____/\____/_/ /_/ /_/ .___/_/\___/\__/\___/ 
+                    /_/                      
+
+EOF
 log "✅ Setup for '$instanceName' completed successfully."
-echo -e ${green}"✅ Setup for '$instanceName' completed successfully."${undo}
-echo "Log saved to: $logFile"
-echo -e ${green}"Access your Foundry instance at: https://$instanceUrl$"${undo}
-echo ""
-echo -e ${yellow}"To create another instance on this server, run this script again using:"${undo}
-echo "./foundry-install.sh"
+ok  "✅ Setup for '$instanceName' completed successfully."
+ui  "Log saved to: $logFile"
+ok  "Access your Foundry instance at: https://$instanceUrl"
+ui  ""
+warn "To create another instance on this server, run this script again:"
+ui  "./foundry-install.sh"
 exit 0
