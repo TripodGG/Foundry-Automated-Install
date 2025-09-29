@@ -286,7 +286,11 @@ done
 
 installDir="$homeDir/foundryvtt"
 dataDir="$homeDir/foundrydata/$instanceName"
+logDir="$homeDir/foundrydata/$instanceName/Logs"
+configDir="$homeDir/foundrydata/$instanceName/Config"
 sudo mkdir -p "$dataDir"
+sudo mkdir -p "$logDir"
+sudo mkdir -p "$configDir"
 ok  "Instance directories created successfully."
 log "$dataDir directory created successfully"
 log "Foundry Install Started"
@@ -354,6 +358,9 @@ if [ "$deleteZip" = true ] && [ -f "$filename" ]; then
 else
   log "$(basename "$filename") retained (or not present)"
 fi
+
+sudo chown -R "$currentUser:$currentUser" $installDir
+sudo chown -R "$currentUser:$currentUser" $dataDir
 
 
 
@@ -516,11 +523,9 @@ fi
 # ==========================
 # Write options.json
 # ==========================
-configDir="$dataDir/Config"
 optionsFile="$configDir/options.json"
 backupFile="$configDir/options.json.bak"
 
-sudo mkdir -p "$configDir"
 if [ -f "$optionsFile" ]; then
   cp "$optionsFile" "$backupFile"
   log "📦 Existing options.json backed up to options.json.bak"
